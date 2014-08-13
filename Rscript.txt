@@ -1,0 +1,143 @@
+#con setwd indicamos la carpeta de trabajo
+setwd("yourPath");
+
+
+
+
+#//////// CARGA DE LOS DATA SETS /////////////////////
+
+#Vamos a analizar un periodo comprendido entre 2005 y 2009.
+years = seq(2005, 2009)
+
+#globalds nos guardará el dataset de cada año. Cada posición de nuestra lista contendrá el dataframe resultante
+#de cargar el csv de cada año.
+globalds <- list()
+for(i in 1:length(years)) 
+	globalds[[i]] <- read.csv(paste("dgt",years[i],".csv",sep=""))
+
+
+#Quereamos mapear en un mapa de españa dividido por provincias, el porcentaje de mortalidad de cada provincia.
+#Vamos a distribuir todos los porcentajes en una escala de rangos de mortalidad. A cada rango se le asignará
+#un color. Cada província se pintará de un cierto color dependiendo de a que rango pertenece su porcentaje de 
+#mortalidad
+
+#Mirando los datasets, la columna 'Mortales' contiene el tanto por ciento de accidentes mortales por provincia.
+#para poder realizar una escala de colores correcta, hemos de detectar el máximo porcentaje de entre todos los csv's
+
+#Generamos un array que contandrá la máxima mortalidad de cada año
+maxs <- vector()
+for(i in 1:length(years)) 
+	maxs[i] <- max(globalds[[i]]$mortalidad)
+
+
+#consultamos la máxima mortalidad de entre todos los años
+maxMortality <- max(maxs)
+
+
+
+#maxMortality tiene un valor de 18.27. Nuestra escala de rangos de mortalidad irá de 0 a 20. Dividiremos nuestra
+#escala de rango en 4 partes, por lo tanto cada rango ocupa 5 puntos (0-5, 5-10, 10-15, 15-20)
+
+#para poder distribuir cada % de mortalidad, a cada porcentaje de mortalidad le aplicaremos el módulo + 1
+# (%mortalidad %/% 5) + 1. El resultado del módulo nos dirá a que rango pertenece dicho porcentaje de mortalidad
+
+
+#Necesitamos una paleta de colores para usar en nuestra escala de rangos:
+#Usando la libreria RColorBrewer, creamos una paleta de colores de rojos, de 4 niveles. Todos los % de mortalidades 
+#irán distribuidas en nuestros 4 rangos de porcentajes de mortalidad
+library("RColorBrewer")
+
+#creamos una paleta de 5 colores para eliminar el primer color generado (es siempre demasiado claro)
+colorPalette <- brewer.pal(5, "Reds")[2:5]
+
+
+#ya tenemos una paleta de colores que vamos a aplicar sobre nuestros rangos de porcentajes. Vamos a cargar el mapa:
+
+
+
+
+#//////// CARGA DEL MAPA   /////////////////////
+
+#cargamos libreria sp (A package that provides classes and methods for spatial data. The classes document where 
+#the spatial location information resides, for 2D or 3D data. Utility functions are provided, e.g. for plotting 
+#data as maps, spatial selection, as well as methods for retrieving coordinates, for subsetting, print, summary, etc.)library("sp")
+library("sp")
+
+#cargamos el mapa de españa ploteado por provincias.
+load("ESP_adm2.Rdata")
+
+#Cargar ESP_adm2.Rdata nos genera una nueva variable llamada 'gamd'. Esta variable es del tipo SpatialPolygonsDataFrame.
+#Nos interesa saber en qué orden gadm dibuja las províncias, ya que tenemos que hacerlo coincidir con el orden de las provincias en nuestro dataset.
+#Con las funciones str y summary se puede ver la estructura del objeto 'gadm'. 
+#Se puede ver y guardar el orden de las provincias accediendo a la propiedad NAME_2 de la variable:
+provsOrder <- data.frame(gadm)$NAME_2
+
+
+#El proceso que viene a continuación se tiene que ejecutar para cada uno de nuestros datasets:
+#usaremos un indice para acceder a cada año (recordar que el objeto globalds es una lista que contiene todos los datasets de cada año)
+j<- 1
+
+#tenemos que mirar, para cada provincia que dibuja nuestro objeto gadm, en que fila del csv esta dicha provincia.
+#para hacerlo, buscamos cada nombre de provincia dentro de nuestro csv. Hay el problema de que los nombres de provincia
+#en el csv están en mayúsculas, sin acentos y en cambio el objeto gadm los tiene en minúscula, con acentos. 
+
+#Haremos la comparacion siempre usando nombres en mayúsculas, sin acentos.
+globalds[[j]]$Provincias <- iconv(globalds[[j]]$Provincias, to="ASCII//TRANSLIT")
+
+
+
+#miramos, segun el orden de ploteo de las provincias, en qué fila se encuentran en el csv
+provsIndex <- vector(length = length(provsOrder))
+for(i in 1:length(provsOrder))
+{	
+	provOrder = iconv(toupper(provsOrder[i]), to="ASCII//TRANSLIT")
+	provsIndex[i] <- which(globalds[[j]]$Provincias == provOrder)
+}
+
+
+#calculamos qué nivel de color le toca a cada mortalidad del csv. Vamos buscando las províncias en el csv según los 
+#índices que hemos encontrado en el paso anterior. De esta manera tendremos un array de colores ordenados con el mismo
+#orden de ploteo de provincias usado por gadm
+provsColorLevel <- vector(length = length(provsOrder))
+for(i in 1:length(provsOrder))
+{
+	provsColorLevel[i] <- (globalds[[j]]$mortalidad[provsIndex[i]] %/% 5) + 1
+}
+
+
+#guardamos como factor el conjunto de niveles de color asignados a cada provincia
+#qué son los factores? buena explicación en:http://www.stat.berkeley.edu/classes/s133/factors.html
+#Factors represent a very efficient way to store character values, because each unique character value is stored only once, and the data itself is stored as a vector of integers
+gadm$provsColorLevel = as.factor(provsColorLevel)
+spplot(gadm, "provsColorLevel", col.regions = colorPalette, col = "white")
+
+
+
+#//////// HISTOGRAMA   /////////////////////
+
+
+#histograma de como se distribuyen los % de mortalidades (cuantas veces aparece un nivel de porcentaje de mortalidad)
+hist(provsColorLevel, 
+	breaks = c(0.5, 1.5, 2.5, 3.5, 4.5), 
+	col = colorPalette, 
+	yaxt = "n", 
+	xlab="tasa de mortalidad", 
+	ylab="Nº de provincias")
+axis(2, at=seq(0, 30, by=2))
+
+
+#//////// BARPLOT: MEDIA TOTAL DE Nº DE MUERTOSXACCIDENTE, POR PROVINCIA  /////////////////////
+
+#realizamos la media total de todos los años del nº de muertos por accidente
+#creamos matriz con 2 columnas (provincia y la media)
+deadsSumMatrix <- cbind(Provincias = globalds[[j]]$Provincias, DeadsMean = 0)
+	
+#sumamos todos muertosxaccidente de cada año
+for(a in 1:length(globalds))
+	for (b in 1:length(deadsSumMatrix[,1]))
+		deadsSumMatrix[b,2] = as.numeric(deadsSumMatrix[b,2]) + globalds[[a]]$Muertosxacc[b]
+	
+#aplicamos la media y ordenamos de mayor a menor
+deadsSumMatrix[,2] <- sapply(deadsSumMatrix[,2], function(x) as.numeric(x)/5)
+deadsMeanOrdered <- deadsSumMatrix[order(deadsSumMatrix[,2], decreasing = TRUE), ]
+barplot(as.numeric(deadsMeanOrdered[,2]), names=deadsMeanOrdered[,1], las=2, col="#cc0000", ylim=c(0,2), border="NA")
